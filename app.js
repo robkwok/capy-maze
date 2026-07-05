@@ -40,6 +40,31 @@ function b64urlDecode(str) {
   return atob(str);
 }
 
+function bytesToB64url(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlToBytes(str) {
+  const raw = b64urlDecode(str);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+// Small deterministic PRNG so a generated maze can be shared as just its seed.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // localStorage access throws under iOS "Block All Cookies" and some WebViews
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } }
@@ -55,6 +80,7 @@ class Maze {
     this.mask = new Uint8Array(cols * rows).fill(1);  // 1 = playable cell, 0 = void (shaped mazes)
     this.start = { x: 0, y: 0 };
     this.goal = { x: cols - 1, y: rows - 1 };
+    this.gen = null;  // {seed, cols, rows} while the maze is an untouched generator output
   }
 
   static DIRS = [
@@ -84,6 +110,7 @@ class Maze {
     if (!D || !this.active(a.x, a.y) || !this.active(b.x, b.y)) return false;
     this.walls[this.i(a.x, a.y)] &= ~D.d;
     this.walls[this.i(b.x, b.y)] &= ~D.o;
+    this.gen = null;  // no longer reproducible from a seed
     return true;
   }
 
@@ -92,15 +119,20 @@ class Maze {
     if (!D || !this.active(a.x, a.y) || !this.active(b.x, b.y)) return false;
     this.walls[this.i(a.x, a.y)] |= D.d;
     this.walls[this.i(b.x, b.y)] |= D.o;
+    this.gen = null;
     return true;
   }
 
   // Iterative recursive-backtracker: produces a perfect maze (unique solution).
-  static generate(cols, rows) {
+  // Deterministic for a given seed — seed share links depend on this exact
+  // algorithm, so changes here break previously shared #r= links.
+  static generate(cols, rows, seed) {
+    const s = seed === undefined ? (Math.random() * 0xFFFFFFFF) >>> 0 : seed >>> 0;
+    const rng = mulberry32(s);
     const m = new Maze(cols, rows);
     const seen = new Uint8Array(cols * rows);
-    const sx = Math.floor(Math.random() * cols);
-    const sy = Math.floor(Math.random() * rows);
+    const sx = Math.floor(rng() * cols);
+    const sy = Math.floor(rng() * rows);
     const stack = [{ x: sx, y: sy }];
     seen[m.i(sx, sy)] = 1;
     while (stack.length) {
@@ -111,13 +143,14 @@ class Maze {
         if (m.inb(nx, ny) && !seen[m.i(nx, ny)]) options.push({ x: nx, y: ny });
       }
       if (!options.length) { stack.pop(); continue; }
-      const next = options[Math.floor(Math.random() * options.length)];
+      const next = options[Math.floor(rng() * options.length)];
       m.removeWallBetween(cur, next);
       seen[m.i(next.x, next.y)] = 1;
       stack.push(next);
     }
     m.start = { x: 0, y: 0 };
     m.goal = { x: cols - 1, y: rows - 1 };
+    m.gen = { seed: s, cols, rows };  // stamped last: carving above cleared it
     return m;
   }
 
@@ -171,22 +204,67 @@ class Maze {
     m.mask.set(this.mask);
     m.start = { ...this.start };
     m.goal = { ...this.goal };
+    m.gen = this.gen ? { ...this.gen } : null;
     return m;
   }
 
+  // Compact v2 binary: header + 2 bits per cell (open right / open down),
+  // plus 1 bit per cell of mask for shaped mazes. Keeps share URLs short
+  // enough that iMessage reliably linkifies them.
   encode() {
-    const payload = {
-      v: 1, c: this.cols, r: this.rows,
-      s: [this.start.x, this.start.y],
-      g: [this.goal.x, this.goal.y],
-      w: btoa(String.fromCharCode(...this.walls)),
-    };
-    // only shaped mazes carry a mask; plain rectangles stay short & backward-compatible
-    if (this.mask.includes(0)) payload.k = btoa(String.fromCharCode(...this.mask));
-    return b64urlEncode(JSON.stringify(payload));
+    const n = this.cols * this.rows;
+    const hasMask = this.mask.includes(0);
+    const wallBytes = new Uint8Array(Math.ceil((n * 2) / 8));
+    for (let i = 0; i < n; i++) {
+      const x = i % this.cols, y = (i / this.cols) | 0;
+      if (x + 1 < this.cols && !(this.walls[i] & 2)) wallBytes[(2 * i) >> 3] |= 1 << ((2 * i) & 7);
+      if (y + 1 < this.rows && !(this.walls[i] & 4)) wallBytes[(2 * i + 1) >> 3] |= 1 << ((2 * i + 1) & 7);
+    }
+    const head = [2, this.cols, this.rows, hasMask ? 1 : 0,
+      this.start.x, this.start.y, this.goal.x, this.goal.y];
+    const maskBytes = hasMask ? new Uint8Array(Math.ceil(n / 8)) : new Uint8Array(0);
+    if (hasMask) {
+      for (let i = 0; i < n; i++) if (this.mask[i]) maskBytes[i >> 3] |= 1 << (i & 7);
+    }
+    const bytes = new Uint8Array(head.length + wallBytes.length + maskBytes.length);
+    bytes.set(head);
+    bytes.set(wallBytes, head.length);
+    bytes.set(maskBytes, head.length + wallBytes.length);
+    return bytesToB64url(bytes);
   }
 
   static decode(str) {
+    const bytes = b64urlToBytes(str);
+    if (bytes.length > 8 && bytes[0] === 2) return Maze.decodeV2(bytes);
+    return Maze.decodeV1(str);  // legacy JSON links and old saved mazes
+  }
+
+  static decodeV2(bytes) {
+    const c = bytes[1], r = bytes[2], flags = bytes[3];
+    if (c < 2 || r < 2 || c > 40 || r > 40) throw new Error('bad size');
+    const n = c * r;
+    const wallLen = Math.ceil((n * 2) / 8);
+    const maskLen = (flags & 1) ? Math.ceil(n / 8) : 0;
+    if (bytes.length !== 8 + wallLen + maskLen) throw new Error('bad length');
+    const m = new Maze(c, r);
+    if (flags & 1) {
+      for (let i = 0; i < n; i++) m.mask[i] = (bytes[8 + wallLen + (i >> 3)] >> (i & 7)) & 1;
+      if (!m.mask.includes(1)) throw new Error('empty mask');
+    }
+    m.start = { x: clamp(bytes[4], 0, c - 1), y: clamp(bytes[5], 0, r - 1) };
+    m.goal = { x: clamp(bytes[6], 0, c - 1), y: clamp(bytes[7], 0, r - 1) };
+    if (same(m.start, m.goal)) throw new Error('bad endpoints');
+    if (!m.active(m.start.x, m.start.y) || !m.active(m.goal.x, m.goal.y)) throw new Error('bad endpoints');
+    for (let i = 0; i < n; i++) {
+      const x = i % c, y = (i / c) | 0;
+      if ((bytes[8 + ((2 * i) >> 3)] >> ((2 * i) & 7)) & 1) m.removeWallBetween({ x, y }, { x: x + 1, y });
+      if ((bytes[8 + ((2 * i + 1) >> 3)] >> ((2 * i + 1) & 7)) & 1) m.removeWallBetween({ x, y }, { x, y: y + 1 });
+    }
+    m.sanitize();
+    return m;
+  }
+
+  static decodeV1(str) {
     const o = JSON.parse(b64urlDecode(str));
     if (o.v !== 1) throw new Error('bad version');
     const c = o.c | 0, r = o.r | 0;
@@ -1270,9 +1348,17 @@ function saveCurrentBuild(name) {
 
 /* ---------------- share ---------------- */
 
+function mazeShareUrl(maze) {
+  // untouched generated mazes travel as just their seed — a ~45-char link
+  const tag = maze.gen
+    ? 'r=' + maze.gen.seed.toString(36) + '-' + maze.gen.cols + '-' + maze.gen.rows
+    : 'm=' + maze.encode();
+  return location.origin + location.pathname + '#' + tag;
+}
+
 async function shareMaze(maze, label) {
   if (!maze) return;
-  const url = location.origin + location.pathname + '#m=' + maze.encode();
+  const url = mazeShareUrl(maze);
   if (navigator.share) {
     try {
       await navigator.share({
@@ -1294,6 +1380,17 @@ async function shareMaze(maze, label) {
 }
 
 function parseHashMaze() {
+  const rm = location.hash.match(/#r=([0-9a-z]+)-(\d+)-(\d+)/);
+  if (rm) {
+    const c = +rm[2], r = +rm[3];
+    if (c >= 2 && c <= 40 && r >= 2 && r <= 40) {
+      try {
+        const m = Maze.generate(c, r, parseInt(rm[1], 36) >>> 0);
+        if (m.isSolvable()) return { present: true, maze: m };
+      } catch (e) { /* fall through to broken-link handling */ }
+    }
+    return { present: true, maze: null };
+  }
   const match = location.hash.match(/#m=([A-Za-z0-9_-]+)/);
   if (!match) return { present: false, maze: null };
   try {

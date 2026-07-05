@@ -37,4 +37,7 @@ access work.
 - Mazes are perfect mazes (iterative recursive backtracker); solvability is
   checked with BFS. Shared mazes are sanitized on decode (symmetric walls,
   solid border, clamped size).
-- Saved/shared mazes serialize to base64url JSON: wall bitmask + start/goal.
+- Share links are short: generated mazes encode as just their PRNG seed
+  (`#r=seed-cols-rows`, ~45 chars total), and built mazes use a compact binary
+  format (`#m=…`, 2 bits/cell + 1 mask bit/cell for shapes) so iMessage
+  reliably linkifies them. Legacy JSON links still decode.
