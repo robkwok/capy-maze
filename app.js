@@ -785,6 +785,22 @@ function drawYuzuItems(t) {
   }
 }
 
+function drawYuzuFriend(t) {
+  if (mode !== 'play' || !play || !play.yuzu || !play.yuzu.friend) return;
+  const yz = play.yuzu;
+  const cs = view.cs;
+  const c = cellCenter(yz.friend);
+  drawCapy(c.x, c.y + cs * 0.08, cs * 0.45, -1, t + 1234, false);
+  for (let i = 0; i < Math.min(yz.given, 3); i++) {
+    ctx.fillStyle = C.orange;
+    el(ctx, c.x - cs * 0.26 + i * cs * 0.15, c.y + cs * 0.32, cs * 0.06, cs * 0.055);
+    ctx.fill();
+    ctx.strokeStyle = C.orangeDeep;
+    ctx.lineWidth = Math.max(1, cs * 0.015);
+    ctx.stroke();
+  }
+}
+
 function drawYuzuSign(m) {
   if (mode !== 'play' || !play || !play.yuzu) return;
   const cs = view.cs;
@@ -872,6 +888,7 @@ function render(t) {
   drawYuzuItems(t);
   drawWalls(m);
   if (mode === 'build' && build && build.solvable) drawSpringGlow(m, t);
+  drawYuzuFriend(t);
   drawYuzuSign(m);
 
   // capybara
@@ -927,6 +944,7 @@ function updateHud() {
 function frame(t) {
   // no point repainting the maze underneath a modal overlay
   if (!document.querySelector('.overlay:not(.hidden)')) {
+    yuzuFriendTick(t);
     render(t);
     updateHud();
   }
@@ -1034,13 +1052,6 @@ function playSample(cell) {
     while (play.path.length - 1 > existing) {
       const removed = play.path.pop();
       play.idx.delete(key(removed));
-      if (play.yuzu) {
-        const it = play.yuzu.items.get(key(removed));
-        if (it && it.collected) {
-          it.collected = false;   // un-munch: walking back returns the yuzu
-          play.yuzu.pouch -= it.v;
-        }
-      }
     }
     const newHead = play.path[play.path.length - 1];
     if (newHead.x !== head.x) play.fx = newHead.x > head.x ? 1 : -1;
@@ -1126,7 +1137,19 @@ function setupYuzu(maze) {
   let placedValue = 0;
   items.forEach(it => { placedValue += it.v; });
   if (placedValue < target) target = Math.max(2, placedValue);  // tiny shaped mazes: collect everything
-  return { target, items, pouch: 0 };
+  // Capy's little friend sits near the spring: stand with him while over the
+  // target and Capy shares yuzus down — sharing stops AT the target, so the
+  // maze is always winnable no matter what got munched.
+  const { dist } = maze.bfsFrom(maze.goal.x, maze.goal.y);
+  let friend = null, fallback = null;
+  for (const c of cells) {
+    if (items.has(key(c))) continue;
+    const d = dist[maze.i(c.x, c.y)];
+    if (d >= 2 && d <= 5) { friend = c; break; }
+    if (!fallback && d > 0) fallback = c;
+  }
+  friend = friend || fallback;
+  return { target, items, pouch: 0, friend, given: 0, lastGive: 0 };
 }
 
 function yuzuNotYet() {
@@ -1134,7 +1157,31 @@ function yuzuNotYet() {
   nopeSound();
   toast(pouch < target
     ? `Capy has ${pouch} — he needs ${target - pouch} more 🍊!`
-    : `${pouch - target} too many! Walk back along the trail to un-munch 🍊`, 2600);
+    : `${pouch - target} too many! Stand with Capy's little friend to share 🍊`, 2800);
+}
+
+// Standing on the friend's cell while over the target shares one yuzu at a
+// time (armed on arrival so just passing through never gives one away).
+let friendPrevHead = null;
+
+function yuzuFriendTick(t) {
+  if (mode !== 'play' || !play || play.done || !play.yuzu || !play.yuzu.friend) return;
+  const yz = play.yuzu;
+  const head = play.path[play.path.length - 1];
+  const hk = key(head);
+  if (friendPrevHead !== hk) {
+    friendPrevHead = hk;
+    if (same(head, yz.friend)) yz.lastGive = t;
+    return;
+  }
+  if (!same(head, yz.friend)) return;
+  if (yz.pouch > yz.target && t - yz.lastGive > 800) {
+    yz.lastGive = t;
+    yz.pouch--;
+    yz.given++;
+    tone(700, 500, 0.08, 0, 'triangle', 0.07);
+    if (yz.pouch === yz.target) squeak(0.1);
+  }
 }
 
 function currentShape() {
@@ -1865,7 +1912,7 @@ yuzuModeBtn.addEventListener('click', () => {
   lsSet('capymaze.yuzumode', yuzuMode ? '1' : '0');
   syncYuzuBtn();
   if (yuzuMode) {
-    toast('Collect exactly the target number of yuzus, then hop in the spring! Gold ones are worth 5 🍊', 3800);
+    toast('Munch exactly the target number of yuzus, then hop in the spring! Gold = 5. Share extras with Capy’s little friend 🐾', 4200);
   }
   if (play && (play.kind === 'random' || play.kind === 'shared')) {
     enterPlay(play.maze, { kind: play.kind, name: play.name });
@@ -1924,4 +1971,5 @@ window.__capyTest = {
   cellCenter,
   canvas,
   renderNow: () => render(performance.now()),
+  yuzuFriendTick,
 };
