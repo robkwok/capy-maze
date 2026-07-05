@@ -16,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
 <!-- bump ?v= together whenever styles.css or app.js change, so GitHub Pages'
      10-minute cache can never pair a fresh index.html with a stale script -->
-<link rel="stylesheet" href="styles.css?v=7">
+<link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
 
@@ -99,6 +99,16 @@
   <canvas id="mazeCanvas" aria-label="Capybara maze — drag the capybara to the hot spring"></canvas>
 </main>
 
+<div id="quizCard" class="quizCard" role="dialog" aria-label="Math question" style="display:none">
+  <button id="quizClose" class="quizClose" aria-label="Close">✕</button>
+  <div id="quizText"></div>
+  <div class="quizChoices">
+    <button class="quizChoice"></button>
+    <button class="quizChoice"></button>
+    <button class="quizChoice"></button>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status"></div>
 
 <div id="winOverlay" class="overlay hidden">
@@ -147,6 +157,6 @@
   </div>
 </div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

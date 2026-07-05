@@ -14,11 +14,12 @@ them.
 - **🍊 Yuzu Ten** (toggle in the Play bar) — first-grade math mode: yuzus
   (worth 1) and golden yuzus (worth 5) are scattered through the maze, and the
   spring only opens when Capy arrives with *exactly* the target count.
-  Munched too many? Stand with Capy's little friend near the spring and Capy
-  shares one at a time (never below the target), so every maze stays winnable
-  — route planning becomes addition and subtraction within 20. Layouts derive
-  from the maze seed, so a shared link gives both players identical yuzus for
-  fair races.
+  Arrive short and the spring asks the missing-addend question (8 + ❓ = 10);
+  munch too many and Capy's little friend asks the subtraction (13 − ❓ = 10)
+  before accepting exactly that many. The child answers — three big choices,
+  wobble and retry — and every maze stays winnable from any state. Layouts
+  derive from the maze seed, so a shared link gives both players identical
+  yuzus for fair races.
 - **🛠️ Build** — start from solid ground and **⛏️ Dig** tunnels by dragging.
   **🧱 Fill** fills passages back in, **🐾 Capy** and **♨️ Spring** move the
   start and goal. Pick a canvas shape — square, heart 🧡, donut 🍩, diamond 🔷,

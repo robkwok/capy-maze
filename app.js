@@ -1049,6 +1049,7 @@ function playSample(cell) {
     const legalBack = (prev && same(cell, prev)) ||
       (manhattan(head, cell) === 1 && play.maze.canPass(head, cell));
     if (!legalBack) return;
+    hideQuiz();
     while (play.path.length - 1 > existing) {
       const removed = play.path.pop();
       play.idx.delete(key(removed));
@@ -1081,6 +1082,7 @@ function playSample(cell) {
 
 function extendTo(cell, from) {
   if (play.done) return;
+  hideQuiz();  // moving on dismisses a pending question; triggers re-ask fresh
   play.path.push(cell);
   play.idx.set(key(cell), play.path.length - 1);
   play.moves++;
@@ -1096,7 +1098,7 @@ function extendTo(cell, from) {
   }
   if (same(cell, play.maze.goal)) {
     if (!play.yuzu || play.yuzu.pouch === play.yuzu.target) onWin();
-    else yuzuNotYet();
+    else yuzuArrival();
   }
 }
 
@@ -1149,38 +1151,112 @@ function setupYuzu(maze) {
     if (!fallback && d > 0) fallback = c;
   }
   friend = friend || fallback;
-  return { target, items, pouch: 0, friend, given: 0, lastGive: 0 };
+  return { target, items, pouch: 0, friend, given: 0, lastGive: 0, quizSolved: 0, transferLeft: 0 };
 }
 
-function yuzuNotYet() {
+// ----- the math moments: the child answers, THEN the game acts -----
+// Arriving under target at the spring asks the grade-1 missing-addend
+// question (P + ? = T). Arriving at the friend over target asks the
+// subtraction (P - ? = T); a correct answer hands over exactly that many.
+
+let quiz = null;  // {kind:'need'|'share', answer}
+
+function makeChoices(answer) {
+  const opts = new Set([answer]);
+  let d = 1;
+  while (opts.size < 3) {
+    if (answer - d >= 1) opts.add(answer - d);
+    if (opts.size < 3) opts.add(answer + d);
+    d++;
+  }
+  return [...opts].sort(() => Math.random() - 0.5);
+}
+
+function showQuiz(kind) {
+  const { pouch, target } = play.yuzu;
+  const answer = Math.abs(target - pouch);
+  quiz = { kind, answer };
+  $('quizText').innerHTML = kind === 'need'
+    ? `Capy has ${pouch}. The spring needs ${target}.<span class="eq">${pouch} + ❓ = ${target}</span>`
+    : `Capy has ${pouch}, but he only needs ${target}!<br>How many yuzus for his friend?<span class="eq">${pouch} − ❓ = ${target}</span>`;
+  const choices = makeChoices(answer);
+  document.querySelectorAll('.quizChoice').forEach((b, i) => {
+    b.textContent = choices[i];
+    b.classList.remove('wrong');
+  });
+  $('quizCard').style.display = '';
+}
+
+function hideQuiz() {
+  if (!quiz) return;
+  quiz = null;
+  $('quizCard').style.display = 'none';
+}
+
+document.querySelectorAll('.quizChoice').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (!quiz || !play || !play.yuzu || play.done) return;
+    const yz = play.yuzu;
+    if (+btn.textContent !== quiz.answer) {
+      nopeSound();
+      btn.classList.add('wrong');
+      setTimeout(() => btn.classList.remove('wrong'), 450);
+      return;
+    }
+    const { kind, answer } = quiz;
+    hideQuiz();
+    yz.quizSolved++;
+    squeak();
+    if (kind === 'need') {
+      const cells = [];
+      for (const [k, it] of yz.items) {
+        if (it.collected) continue;
+        const [x, y] = k.split(',').map(Number);
+        cells.push({ x, y });
+      }
+      play.hint = { cells, until: performance.now() + 2600 };
+      toast(`Yes! Go munch ${answer} more 🍊`, 2200);
+    } else {
+      yz.transferLeft = answer;   // the rAF tick hands them over one at a time
+      yz.lastGive = performance.now();
+    }
+  });
+});
+
+$('quizClose').addEventListener('click', hideQuiz);
+
+function yuzuArrival() {
   const { pouch, target } = play.yuzu;
   nopeSound();
-  toast(pouch < target
-    ? `Capy has ${pouch} — he needs ${target - pouch} more 🍊!`
-    : `${pouch - target} too many! Stand with Capy's little friend to share 🍊`, 2800);
+  if (pouch < target) showQuiz('need');
+  else toast("Too many! Capy's little friend would love some 🍊", 2600);
 }
 
-// Standing on the friend's cell while over the target shares one yuzu at a
-// time (armed on arrival so just passing through never gives one away).
 let friendPrevHead = null;
 
 function yuzuFriendTick(t) {
   if (mode !== 'play' || !play || play.done || !play.yuzu || !play.yuzu.friend) return;
   const yz = play.yuzu;
+  // deliver the promised yuzus, one pop at a time
+  if (yz.transferLeft > 0 && t - yz.lastGive > 450) {
+    yz.lastGive = t;
+    if (yz.pouch > yz.target) {
+      yz.pouch--;
+      yz.given++;
+      tone(700, 500, 0.08, 0, 'triangle', 0.07);
+    }
+    yz.transferLeft--;
+    if (yz.transferLeft === 0) {
+      squeak(0.1);
+      toast('Thank you!! 💛', 1800);
+    }
+    return;
+  }
   const head = play.path[play.path.length - 1];
   const hk = key(head);
   if (friendPrevHead !== hk) {
     friendPrevHead = hk;
-    if (same(head, yz.friend)) yz.lastGive = t;
-    return;
-  }
-  if (!same(head, yz.friend)) return;
-  if (yz.pouch > yz.target && t - yz.lastGive > 800) {
-    yz.lastGive = t;
-    yz.pouch--;
-    yz.given++;
-    tone(700, 500, 0.08, 0, 'triangle', 0.07);
-    if (yz.pouch === yz.target) squeak(0.1);
+    if (same(head, yz.friend) && yz.pouch > yz.target && !quiz) showQuiz('share');
   }
 }
 
@@ -1218,6 +1294,7 @@ function enterPlay(maze, opts) {
   play.yuzu = (yuzuMode && (opts.kind === 'random' || opts.kind === 'shared'))
     ? setupYuzu(maze)
     : null;
+  hideQuiz();
   playerPx.snap = true;
   playBar.classList.toggle('testing', opts.kind === 'test');
   hideOverlay('winOverlay');
@@ -1238,6 +1315,9 @@ function onWin() {
   if (play.yuzu) stats += ` and exactly ${play.yuzu.target} yuzus`;
   if (play.hints > 0) stats += ` and ${play.hints} hint${play.hints === 1 ? '' : 's'}`;
   stats += '! Capy is soaking happily. ♨️';
+  if (play.yuzu && play.yuzu.quizSolved > 0) {
+    stats += ` You solved ${play.yuzu.quizSolved} math question${play.yuzu.quizSolved === 1 ? '' : 's'}! 🧮`;
+  }
   $('winTitle').textContent = title;
   $('winStats').textContent = stats;
   $('winNextBtn').textContent = play.kind === 'test' ? '🛠️ Back to Build' : '🔀 New Maze';
@@ -1713,6 +1793,7 @@ function setMode(m) {
   buildBar.classList.toggle('hidden', m !== 'build');
   if (m === 'build' && !build) newBuild(6, 6);
   if (m === 'play') playerPx.snap = true;
+  else hideQuiz();
   if (!sessionHints[m]) {
     sessionHints[m] = true;
     toast(m === 'play'

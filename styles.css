@@ -254,6 +254,75 @@ button {
 
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* ---------- math question card (Yuzu Ten) ---------- */
+
+.quizCard {
+  position: fixed;
+  left: 50%;
+  bottom: max(84px, calc(env(safe-area-inset-bottom) + 70px));
+  transform: translateX(-50%);
+  background: var(--card);
+  border: 3px solid var(--orange);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  padding: 16px 20px 14px;
+  z-index: 55;
+  text-align: center;
+  max-width: 92vw;
+}
+
+#quizText {
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--brown);
+  margin-bottom: 12px;
+  line-height: 1.35;
+}
+
+#quizText .eq {
+  display: block;
+  font-size: 26px;
+  color: var(--ink);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quizChoices { display: flex; gap: 12px; justify-content: center; }
+
+.quizChoice {
+  min-width: 64px;
+  min-height: 56px;
+  border-radius: 18px;
+  border: 3px solid var(--sand-edge);
+  background: var(--panel);
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.quizChoice:active { transform: scale(.94); }
+
+.quizChoice.wrong { animation: quizShake .4s ease; border-color: #d66; }
+
+@keyframes quizShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  50% { transform: translateX(6px); }
+  75% { transform: translateX(-4px); }
+}
+
+.quizClose {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  color: var(--ink-soft);
+  padding: 6px;
+  min-height: 32px;
+}
+
 /* ---------- overlays ---------- */
 
 .overlay {
