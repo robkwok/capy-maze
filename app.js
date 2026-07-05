@@ -1296,6 +1296,11 @@ $('newMazeBtn').addEventListener('click', () => {
 
 $('hintBtn').addEventListener('click', useHint);
 
+$('restartBtn').addEventListener('click', () => {
+  if (mode !== 'play' || !play) return;
+  enterPlay(play.maze, { kind: play.kind, name: play.name });
+});
+
 $('shareBtn').addEventListener('click', () => {
   if (play) shareMaze(play.maze, play.name ? `“${play.name}”` : 'This maze is tricky!');
 });
