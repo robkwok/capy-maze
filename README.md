@@ -11,6 +11,12 @@ them.
   your finger (or use arrow keys). Drag back along your trail to backtrack.
   💡 Hint flashes the next few steps of the shortest path, 🔁 Restart replays
   the same maze.
+- **🍊 Yuzu Ten** (toggle in the Play bar) — first-grade math mode: yuzus
+  (worth 1) and golden yuzus (worth 5) are scattered through the maze, and the
+  spring only opens when Capy arrives with *exactly* the target count. Walking
+  back along the trail un-munches — route planning becomes addition and
+  subtraction within 20. Layouts derive from the maze seed, so a shared link
+  gives both players identical yuzus for fair races.
 - **🛠️ Build** — start from solid ground and **⛏️ Dig** tunnels by dragging.
   **🧱 Fill** fills passages back in, **🐾 Capy** and **♨️ Spring** move the
   start and goal. Pick a canvas shape — square, heart 🧡, donut 🍩, diamond 🔷,

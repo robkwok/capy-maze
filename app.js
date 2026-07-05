@@ -433,6 +433,7 @@ const SHAPES = {
 
 let audioCtx = null;
 let muted = lsGet('capymaze.muted') === '1';
+let yuzuMode = lsGet('capymaze.yuzumode') === '1';
 
 function ac() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -467,6 +468,16 @@ function squeak(delay = 0) {
 function winSound() {
   [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, f, 0.2, i * 0.11, 'triangle', 0.14));
   squeak(0.55);
+}
+
+function collectSound(golden) {
+  tone(golden ? 660 : 880, golden ? 990 : 1320, 0.08, 0, 'triangle', 0.08);
+  if (golden) tone(1320, 1760, 0.1, 0.09, 'triangle', 0.07);
+}
+
+function nopeSound() {
+  tone(220, 185, 0.12, 0, 'sine', 0.08);
+  tone(185, 150, 0.14, 0.13, 'sine', 0.08);
 }
 
 /* ---------------- palette ---------------- */
@@ -739,6 +750,57 @@ function drawSpring(m, t) {
   }
 }
 
+function drawYuzuItems(t) {
+  if (mode !== 'play' || !play || !play.yuzu) return;
+  const cs = view.cs;
+  for (const [k, it] of play.yuzu.items) {
+    if (it.collected) continue;
+    const [x, y] = k.split(',').map(Number);
+    const c = cellCenter({ x, y });
+    const bob = REDUCED ? 0 : Math.sin(t / 400 + x * 1.7 + y * 2.3) * cs * 0.02;
+    const golden = it.v === 5;
+    ctx.fillStyle = golden ? '#F5C24D' : C.orange;
+    el(ctx, c.x, c.y + bob, cs * (golden ? 0.19 : 0.15), cs * (golden ? 0.17 : 0.14));
+    ctx.fill();
+    ctx.strokeStyle = golden ? '#D99A1B' : C.orangeDeep;
+    ctx.lineWidth = Math.max(1, cs * 0.02);
+    ctx.stroke();
+    ctx.fillStyle = C.leaf;
+    ctx.save();
+    ctx.translate(c.x + cs * 0.02, c.y + bob - cs * (golden ? 0.17 : 0.14));
+    ctx.rotate(-0.5);
+    el(ctx, 0, 0, cs * 0.055, cs * 0.028);
+    ctx.fill();
+    ctx.restore();
+    if (golden) {
+      ctx.strokeStyle = 'rgba(255,255,255,.9)';
+      ctx.lineWidth = Math.max(1, cs * 0.025);
+      ctx.lineCap = 'round';
+      const sx = c.x + cs * 0.11, sy = c.y + bob - cs * 0.1, r = cs * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(sx - r, sy); ctx.lineTo(sx + r, sy);
+      ctx.moveTo(sx, sy - r); ctx.lineTo(sx, sy + r);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawYuzuSign(m) {
+  if (mode !== 'play' || !play || !play.yuzu) return;
+  const cs = view.cs;
+  const c = cellCenter(m.goal);
+  const w = cs * 1.25, h = cs * 0.44;
+  const y = m.goal.y === 0 ? c.y + cs * 0.46 : c.y - cs * 0.84;
+  rr(ctx, c.x - w / 2, y, w, h, h / 2);
+  ctx.fillStyle = 'rgba(122, 78, 42, .92)';
+  ctx.fill();
+  ctx.fillStyle = '#FFF3DC';
+  ctx.font = `700 ${Math.max(10, cs * 0.26)}px "Baloo 2", ui-rounded, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`🍊 ${play.yuzu.pouch}/${play.yuzu.target}`, c.x, y + h / 2 + 1);
+}
+
 function drawCapy(cx, cy, size, fx, t, happy) {
   const s = size;
   ctx.save();
@@ -807,8 +869,10 @@ function render(t) {
   if (mode === 'play' && play) drawTrail(play.path);
   drawHint(t);
   drawSpring(m, t);
+  drawYuzuItems(t);
   drawWalls(m);
   if (mode === 'build' && build && build.solvable) drawSpringGlow(m, t);
+  drawYuzuSign(m);
 
   // capybara
   const capySize = view.cs * 0.74;
@@ -850,6 +914,14 @@ function updateHud() {
   if (statTime.textContent !== timeText) statTime.textContent = timeText;
   const stepsText = String(play.moves);
   if (statSteps.textContent !== stepsText) statSteps.textContent = stepsText;
+  const yz = $('statYuzu');
+  if (play.yuzu) {
+    const txt = `🍊 ${play.yuzu.pouch}/${play.yuzu.target} · `;
+    if (yz.textContent !== txt) yz.textContent = txt;
+    yz.style.display = '';
+  } else {
+    yz.style.display = 'none';
+  }
 }
 
 function frame(t) {
@@ -962,6 +1034,13 @@ function playSample(cell) {
     while (play.path.length - 1 > existing) {
       const removed = play.path.pop();
       play.idx.delete(key(removed));
+      if (play.yuzu) {
+        const it = play.yuzu.items.get(key(removed));
+        if (it && it.collected) {
+          it.collected = false;   // un-munch: walking back returns the yuzu
+          play.yuzu.pouch -= it.v;
+        }
+      }
     }
     const newHead = play.path[play.path.length - 1];
     if (newHead.x !== head.x) play.fx = newHead.x > head.x ? 1 : -1;
@@ -996,7 +1075,66 @@ function extendTo(cell, from) {
   play.moves++;
   if (!play.started) play.started = performance.now();
   if (cell.x !== from.x) play.fx = cell.x > from.x ? 1 : -1;
-  if (same(cell, play.maze.goal)) onWin();
+  if (play.yuzu) {
+    const it = play.yuzu.items.get(key(cell));
+    if (it && !it.collected) {
+      it.collected = true;
+      play.yuzu.pouch += it.v;
+      collectSound(it.v === 5);
+    }
+  }
+  if (same(cell, play.maze.goal)) {
+    if (!play.yuzu || play.yuzu.pouch === play.yuzu.target) onWin();
+    else yuzuNotYet();
+  }
+}
+
+/* ---------------- Yuzu Ten (make-the-target collecting) ---------------- */
+
+// Layout derives from the maze's generation seed, so a shared seed link gives
+// both players identical yuzus — fair races. Non-generated mazes fall back to
+// a random layout.
+function setupYuzu(maze) {
+  const seedBase = maze.gen ? maze.gen.seed : (Math.random() * 0xFFFFFFFF) >>> 0;
+  const rng = mulberry32((seedBase ^ 0x9E3779B9) >>> 0);
+  const size = Math.max(maze.cols, maze.rows);
+  const [lo, hi] = size >= 22 ? [15, 20] : size >= 16 ? [13, 17] : size >= 12 ? [10, 14] : [8, 10];
+  let target = lo + Math.floor(rng() * (hi - lo + 1));
+  const goldens = target >= 12 ? 2 : 1;                    // golden yuzu = 5
+  const surplus = 4 + Math.floor(rng() * 4);               // extra value forces choosing a route
+  const singles = target + surplus - goldens * 5;          // all-goldens + singles always compose the target
+  const cells = [];
+  for (let y = 0; y < maze.rows; y++) {
+    for (let x = 0; x < maze.cols; x++) {
+      if (!maze.active(x, y)) continue;
+      if (same({ x, y }, maze.start) || same({ x, y }, maze.goal)) continue;
+      cells.push({ x, y });
+    }
+  }
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+  const need = goldens + singles;
+  const picked = [];
+  const nearPicked = c => picked.some(p => Math.abs(p.x - c.x) + Math.abs(p.y - c.y) <= 1);
+  for (const c of cells) { if (picked.length >= need) break; if (!nearPicked(c)) picked.push(c); }
+  for (const c of cells) { if (picked.length >= need) break; if (!picked.includes(c)) picked.push(c); }
+  const items = new Map();
+  picked.slice(0, goldens).forEach(c => items.set(key(c), { v: 5, collected: false }));
+  picked.slice(goldens).forEach(c => items.set(key(c), { v: 1, collected: false }));
+  let placedValue = 0;
+  items.forEach(it => { placedValue += it.v; });
+  if (placedValue < target) target = Math.max(2, placedValue);  // tiny shaped mazes: collect everything
+  return { target, items, pouch: 0 };
+}
+
+function yuzuNotYet() {
+  const { pouch, target } = play.yuzu;
+  nopeSound();
+  toast(pouch < target
+    ? `Capy has ${pouch} — he needs ${target - pouch} more 🍊!`
+    : `${pouch - target} too many! Walk back along the trail to un-munch 🍊`, 2600);
 }
 
 function currentShape() {
@@ -1030,6 +1168,9 @@ function enterPlay(maze, opts) {
     fx: 1,
     hint: null,
   };
+  play.yuzu = (yuzuMode && (opts.kind === 'random' || opts.kind === 'shared'))
+    ? setupYuzu(maze)
+    : null;
   playerPx.snap = true;
   playBar.classList.toggle('testing', opts.kind === 'test');
   hideOverlay('winOverlay');
@@ -1042,9 +1183,12 @@ function onWin() {
   play.done = true;
   play.finishedAt = performance.now();
   winSound();
-  const title = PRAISE[Math.floor(Math.random() * PRAISE.length)];
+  const title = play.yuzu
+    ? `Perfect ${play.yuzu.target}! 🍊`
+    : PRAISE[Math.floor(Math.random() * PRAISE.length)];
   const time = fmtTime(play.finishedAt - (play.started || play.finishedAt));
   let stats = `Solved in ${time} with ${play.moves} steps`;
+  if (play.yuzu) stats += ` and exactly ${play.yuzu.target} yuzus`;
   if (play.hints > 0) stats += ` and ${play.hints} hint${play.hints === 1 ? '' : 's'}`;
   stats += '! Capy is soaking happily. ♨️';
   $('winTitle').textContent = title;
@@ -1710,6 +1854,24 @@ $('winNextBtn').addEventListener('click', () => {
     newRandomMaze(d.cols, d.rows);
   }
 });
+
+const yuzuModeBtn = $('yuzuModeBtn');
+function syncYuzuBtn() {
+  yuzuModeBtn.classList.toggle('active', yuzuMode);
+  yuzuModeBtn.setAttribute('aria-pressed', String(yuzuMode));
+}
+yuzuModeBtn.addEventListener('click', () => {
+  yuzuMode = !yuzuMode;
+  lsSet('capymaze.yuzumode', yuzuMode ? '1' : '0');
+  syncYuzuBtn();
+  if (yuzuMode) {
+    toast('Collect exactly the target number of yuzus, then hop in the spring! Gold ones are worth 5 🍊', 3800);
+  }
+  if (play && (play.kind === 'random' || play.kind === 'shared')) {
+    enterPlay(play.maze, { kind: play.kind, name: play.name });
+  }
+});
+syncYuzuBtn();
 
 const soundBtn = $('soundBtn');
 function syncSoundBtn() {

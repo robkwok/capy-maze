@@ -16,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
 <!-- bump ?v= together whenever styles.css or app.js change, so GitHub Pages'
      10-minute cache can never pair a fresh index.html with a stale script -->
-<link rel="stylesheet" href="styles.css?v=5">
+<link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
 
@@ -57,13 +57,14 @@
     <button class="chip shape" data-shape="diamond" aria-label="Diamond maze">🔷</button>
     <button class="chip shape" data-shape="capy" aria-label="Capybara maze">🦫</button>
   </div>
+  <button id="yuzuModeBtn" class="chip hideWhenTesting" aria-pressed="false">🍊 Yuzu Ten</button>
   <button id="newMazeBtn" class="chip action hideWhenTesting">🔀 New Maze</button>
   <button id="backToBuildBtn" class="chip warn showWhenTesting">⬅️ Back to Build</button>
   <button id="hintBtn" class="chip">💡 Hint</button>
   <button id="restartBtn" class="chip">🔁 Restart</button>
   <button id="shareBtn" class="chip hideWhenTesting">📤 Share</button>
   <button id="galleryBtnPlay" class="chip hideWhenTesting">📚 My Mazes</button>
-  <div class="stats" aria-label="Progress">⏱ <span id="statTime">0:00</span>&nbsp;·&nbsp;👣 <span id="statSteps">0</span></div>
+  <div class="stats" aria-label="Progress"><span id="statYuzu" style="display:none"></span>⏱ <span id="statTime">0:00</span>&nbsp;·&nbsp;👣 <span id="statSteps">0</span></div>
 </div>
 
 <div id="buildBar" class="toolbar hidden">
@@ -146,6 +147,6 @@
   </div>
 </div>
 
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
