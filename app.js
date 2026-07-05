@@ -52,6 +52,7 @@ class Maze {
     this.cols = cols;
     this.rows = rows;
     this.walls = new Uint8Array(cols * rows).fill(15);
+    this.mask = new Uint8Array(cols * rows).fill(1);  // 1 = playable cell, 0 = void (shaped mazes)
     this.start = { x: 0, y: 0 };
     this.goal = { x: cols - 1, y: rows - 1 };
   }
@@ -65,13 +66,14 @@ class Maze {
 
   i(x, y) { return y * this.cols + x; }
   inb(x, y) { return x >= 0 && y >= 0 && x < this.cols && y < this.rows; }
+  active(x, y) { return this.inb(x, y) && this.mask[this.i(x, y)] === 1; }
 
   dirBetween(a, b) {
     return Maze.DIRS.find(D => a.x + D.dx === b.x && a.y + D.dy === b.y) || null;
   }
 
   canPass(a, b) {
-    if (!this.inb(a.x, a.y) || !this.inb(b.x, b.y)) return false;
+    if (!this.active(a.x, a.y) || !this.active(b.x, b.y)) return false;
     const D = this.dirBetween(a, b);
     if (!D) return false;
     return (this.walls[this.i(a.x, a.y)] & D.d) === 0;
@@ -79,7 +81,7 @@ class Maze {
 
   removeWallBetween(a, b) {
     const D = this.dirBetween(a, b);
-    if (!D || !this.inb(a.x, a.y) || !this.inb(b.x, b.y)) return false;
+    if (!D || !this.active(a.x, a.y) || !this.active(b.x, b.y)) return false;
     this.walls[this.i(a.x, a.y)] &= ~D.d;
     this.walls[this.i(b.x, b.y)] &= ~D.o;
     return true;
@@ -87,7 +89,7 @@ class Maze {
 
   addWallBetween(a, b) {
     const D = this.dirBetween(a, b);
-    if (!D || !this.inb(a.x, a.y) || !this.inb(b.x, b.y)) return false;
+    if (!D || !this.active(a.x, a.y) || !this.active(b.x, b.y)) return false;
     this.walls[this.i(a.x, a.y)] |= D.d;
     this.walls[this.i(b.x, b.y)] |= D.o;
     return true;
@@ -123,6 +125,7 @@ class Maze {
     const n = this.cols * this.rows;
     const dist = new Int32Array(n).fill(-1);
     const prev = new Int32Array(n).fill(-1);
+    if (!this.active(sx, sy)) return { dist, prev };
     const q = [this.i(sx, sy)];
     dist[q[0]] = 0;
     for (let h = 0; h < q.length; h++) {
@@ -131,7 +134,7 @@ class Maze {
       for (const D of Maze.DIRS) {
         if (this.walls[cur] & D.d) continue;
         const nx = x + D.dx, ny = y + D.dy;
-        if (!this.inb(nx, ny)) continue;
+        if (!this.active(nx, ny)) continue;
         const ni = this.i(nx, ny);
         if (dist[ni] < 0) {
           dist[ni] = dist[cur] + 1;
@@ -165,20 +168,22 @@ class Maze {
   clone() {
     const m = new Maze(this.cols, this.rows);
     m.walls.set(this.walls);
+    m.mask.set(this.mask);
     m.start = { ...this.start };
     m.goal = { ...this.goal };
     return m;
   }
 
   encode() {
-    const w = btoa(String.fromCharCode(...this.walls));
-    const payload = JSON.stringify({
+    const payload = {
       v: 1, c: this.cols, r: this.rows,
       s: [this.start.x, this.start.y],
       g: [this.goal.x, this.goal.y],
-      w,
-    });
-    return b64urlEncode(payload);
+      w: btoa(String.fromCharCode(...this.walls)),
+    };
+    // only shaped mazes carry a mask; plain rectangles stay short & backward-compatible
+    if (this.mask.includes(0)) payload.k = btoa(String.fromCharCode(...this.mask));
+    return b64urlEncode(JSON.stringify(payload));
   }
 
   static decode(str) {
@@ -190,15 +195,25 @@ class Maze {
     if (raw.length !== c * r) throw new Error('bad walls');
     const m = new Maze(c, r);
     for (let i = 0; i < raw.length; i++) m.walls[i] = raw.charCodeAt(i) & 15;
+    if (o.k) {
+      const rawk = atob(o.k);
+      if (rawk.length !== c * r) throw new Error('bad mask');
+      for (let i = 0; i < rawk.length; i++) m.mask[i] = rawk.charCodeAt(i) & 1;
+      if (!m.mask.includes(1)) throw new Error('empty mask');
+    }
     m.start = { x: clamp(o.s[0] | 0, 0, c - 1), y: clamp(o.s[1] | 0, 0, r - 1) };
     m.goal = { x: clamp(o.g[0] | 0, 0, c - 1), y: clamp(o.g[1] | 0, 0, r - 1) };
     if (same(m.start, m.goal)) throw new Error('bad endpoints');
+    if (!m.active(m.start.x, m.start.y) || !m.active(m.goal.x, m.goal.y)) throw new Error('bad endpoints');
     m.sanitize();
     return m;
   }
 
-  // Enforce symmetric interior walls and solid outer border.
+  // Enforce symmetric interior walls, solid outer border, and sealed void cells.
   sanitize() {
+    for (let i = 0; i < this.mask.length; i++) {
+      if (!this.mask[i]) this.walls[i] = 15;  // symmetry pass below seals the active side too
+    }
     for (let y = 0; y < this.rows; y++) {
       for (let x = 0; x < this.cols; x++) {
         const i = this.i(x, y);
@@ -221,7 +236,110 @@ class Maze {
       }
     }
   }
+
+  // BFS over grid adjacency within the mask (ignores walls) — used for shape
+  // connectivity and placing start/goal, not for solving.
+  maskBfs(sx, sy) {
+    const dist = new Int32Array(this.cols * this.rows).fill(-1);
+    if (!this.active(sx, sy)) return dist;
+    const q = [this.i(sx, sy)];
+    dist[q[0]] = 0;
+    for (let h = 0; h < q.length; h++) {
+      const cur = q[h];
+      const x = cur % this.cols, y = (cur / this.cols) | 0;
+      for (const D of Maze.DIRS) {
+        const nx = x + D.dx, ny = y + D.dy;
+        if (!this.active(nx, ny)) continue;
+        const ni = this.i(nx, ny);
+        if (dist[ni] < 0) { dist[ni] = dist[cur] + 1; q.push(ni); }
+      }
+    }
+    return dist;
+  }
+
+  // Shape functions can produce islands (grid rounding); keep only the biggest.
+  pruneToLargestRegion() {
+    const seen = new Uint8Array(this.cols * this.rows);
+    let best = null;
+    for (let i0 = 0; i0 < this.mask.length; i0++) {
+      if (!this.mask[i0] || seen[i0]) continue;
+      const comp = [i0];
+      seen[i0] = 1;
+      for (let h = 0; h < comp.length; h++) {
+        const cur = comp[h];
+        const x = cur % this.cols, y = (cur / this.cols) | 0;
+        for (const D of Maze.DIRS) {
+          const nx = x + D.dx, ny = y + D.dy;
+          if (!this.inb(nx, ny)) continue;
+          const ni = this.i(nx, ny);
+          if (this.mask[ni] && !seen[ni]) { seen[ni] = 1; comp.push(ni); }
+        }
+      }
+      if (!best || comp.length > best.length) best = comp;
+    }
+    if (!best) return;
+    this.mask.fill(0);
+    for (const i of best) this.mask[i] = 1;
+  }
+
+  // Two active cells as far apart as possible (double BFS), lower index first
+  // so squares keep the traditional top-left start.
+  farthestActivePair() {
+    const toCell = i => ({ x: i % this.cols, y: (i / this.cols) | 0 });
+    const far = d => { let bi = -1, bv = -1; for (let i = 0; i < d.length; i++) if (d[i] > bv) { bv = d[i]; bi = i; } return bi; };
+    const first = this.mask.indexOf(1);
+    if (first < 0) return [{ x: 0, y: 0 }, { x: this.cols - 1, y: this.rows - 1 }];
+    const c0 = toCell(first);
+    const a = far(this.maskBfs(c0.x, c0.y));
+    const ca = toCell(a);
+    const b = far(this.maskBfs(ca.x, ca.y));
+    return a <= b ? [ca, toCell(b)] : [toCell(b), ca];
+  }
+
+  // Build a fully-walled maze whose playable area follows a shape function
+  // over normalized cell-center coordinates u,v in [0,1].
+  static shaped(cols, rows, shapeFn) {
+    const m = new Maze(cols, rows);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const u = (x + 0.5) / cols, v = (y + 0.5) / rows;
+        m.mask[m.i(x, y)] = shapeFn(u, v) ? 1 : 0;
+      }
+    }
+    m.pruneToLargestRegion();
+    if (m.mask.reduce((s, b) => s + b, 0) < 8) m.mask.fill(1);  // degenerate shape → square
+    m.sanitize();
+    const [a, b] = m.farthestActivePair();
+    m.start = a;
+    m.goal = b;
+    return m;
+  }
 }
+
+// Shape templates over normalized coordinates (u across, v down, cell centers).
+const SHAPES = {
+  square: () => true,
+  heart: (u, v) => {
+    const x = (u - 0.5) * 2.4;
+    const y = 1.375 - 2.5 * v;
+    const q = x * x + y * y - 1;
+    return q * q * q - x * x * y * y * y <= 0;
+  },
+  ring: (u, v) => {
+    const dx = (u - 0.5) / 0.5, dy = (v - 0.5) / 0.5;
+    const d = dx * dx + dy * dy;
+    return d <= 1.02 && d >= 0.16;
+  },
+  diamond: (u, v) => Math.abs(u - 0.5) + Math.abs(v - 0.5) <= 0.52,
+  capy: (u, v) => {
+    const inEll = (cx, cy, rx, ry) => {
+      const dx = (u - cx) / rx, dy = (v - cy) / ry;
+      return dx * dx + dy * dy <= 1;
+    };
+    // head + two ears
+    return inEll(0.5, 0.6, 0.44, 0.38) || inEll(0.22, 0.2, 0.15, 0.16) || inEll(0.78, 0.2, 0.15, 0.16);
+  },
+};
 
 /* ---------------- sound ---------------- */
 
@@ -358,26 +476,44 @@ function cellFromPoint(px, py) {
 /* ---------------- drawing ---------------- */
 
 function drawGround(m) {
-  const gw = view.cs * m.cols, gh = view.cs * m.rows;
-  rr(ctx, view.ox - 9, view.oy - 9, gw + 18, gh + 18, 16);
+  const cs = view.cs;
+  if (!m.mask.includes(0)) {
+    const gw = cs * m.cols, gh = cs * m.rows;
+    rr(ctx, view.ox - 9, view.oy - 9, gw + 18, gh + 18, 16);
+    ctx.fillStyle = C.groundEdge;
+    ctx.fill();
+    rr(ctx, view.ox - 3, view.oy - 3, gw + 6, gh + 6, 11);
+    ctx.fillStyle = C.ground;
+    ctx.fill();
+    return;
+  }
+  // shaped maze: draw ground per playable cell so the silhouette shows
   ctx.fillStyle = C.groundEdge;
+  ctx.beginPath();
+  for (let y = 0; y < m.rows; y++)
+    for (let x = 0; x < m.cols; x++)
+      if (m.mask[m.i(x, y)]) ctx.rect(view.ox + x * cs - 6, view.oy + y * cs - 6, cs + 12, cs + 12);
   ctx.fill();
-  rr(ctx, view.ox - 3, view.oy - 3, gw + 6, gh + 6, 11);
   ctx.fillStyle = C.ground;
+  ctx.beginPath();
+  for (let y = 0; y < m.rows; y++)
+    for (let x = 0; x < m.cols; x++)
+      if (m.mask[m.i(x, y)]) ctx.rect(view.ox + x * cs - 1, view.oy + y * cs - 1, cs + 2, cs + 2);
   ctx.fill();
 }
 
 function drawGrid(m) {
+  const cs = view.cs;
   ctx.strokeStyle = C.grid;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  for (let x = 1; x < m.cols; x++) {
-    ctx.moveTo(view.ox + x * view.cs, view.oy);
-    ctx.lineTo(view.ox + x * view.cs, view.oy + m.rows * view.cs);
-  }
-  for (let y = 1; y < m.rows; y++) {
-    ctx.moveTo(view.ox, view.oy + y * view.cs);
-    ctx.lineTo(view.ox + m.cols * view.cs, view.oy + y * view.cs);
+  for (let y = 0; y < m.rows; y++) {
+    for (let x = 0; x < m.cols; x++) {
+      if (!m.mask[m.i(x, y)]) continue;
+      const px = view.ox + x * cs, py = view.oy + y * cs;
+      if (x > 0 && m.mask[m.i(x - 1, y)]) { ctx.moveTo(px, py); ctx.lineTo(px, py + cs); }
+      if (y > 0 && m.mask[m.i(x, y - 1)]) { ctx.moveTo(px, py); ctx.lineTo(px + cs, py); }
+    }
   }
   ctx.stroke();
 }
@@ -388,7 +524,7 @@ function drawDirt(m) {
   ctx.fillStyle = 'rgba(150, 106, 55, .30)';
   for (let y = 0; y < m.rows; y++) {
     for (let x = 0; x < m.cols; x++) {
-      if (m.walls[m.i(x, y)] !== 15) continue;
+      if (!m.mask[m.i(x, y)] || m.walls[m.i(x, y)] !== 15) continue;
       rr(ctx, view.ox + x * cs + cs * 0.07, view.oy + y * cs + cs * 0.07, cs * 0.86, cs * 0.86, cs * 0.2);
       ctx.fill();
     }
@@ -416,12 +552,13 @@ function drawWalls(m) {
   ctx.beginPath();
   for (let y = 0; y < m.rows; y++) {
     for (let x = 0; x < m.cols; x++) {
+      if (!m.mask[m.i(x, y)]) continue;  // void cells draw nothing; active side owns the boundary
       const b = m.walls[m.i(x, y)];
       const px = view.ox + x * cs, py = view.oy + y * cs;
       if (b & 1) { ctx.moveTo(px, py); ctx.lineTo(px + cs, py); }
       if (b & 8) { ctx.moveTo(px, py); ctx.lineTo(px, py + cs); }
-      if (x === m.cols - 1 && (b & 2)) { ctx.moveTo(px + cs, py); ctx.lineTo(px + cs, py + cs); }
-      if (y === m.rows - 1 && (b & 4)) { ctx.moveTo(px, py + cs); ctx.lineTo(px + cs, py + cs); }
+      if ((x === m.cols - 1 || !m.mask[m.i(x + 1, y)]) && (b & 2)) { ctx.moveTo(px + cs, py); ctx.lineTo(px + cs, py + cs); }
+      if ((y === m.rows - 1 || !m.mask[m.i(x, y + 1)]) && (b & 4)) { ctx.moveTo(px, py + cs); ctx.lineTo(px + cs, py + cs); }
     }
   }
   ctx.stroke();
@@ -860,9 +997,12 @@ window.addEventListener('keydown', e => {
 
 /* ---------------- build mode ---------------- */
 
-function newBuild(cols, rows) {
+function newBuild(cols, rows, shapeKey) {
+  const shape = SHAPES[shapeKey] ? shapeKey
+    : (build && SHAPES[build.shape] ? build.shape : 'square');
   build = {
-    maze: new Maze(cols, rows),
+    maze: Maze.shaped(cols, rows, SHAPES[shape]),
+    shape,
     tool: (build && build.tool) || 'dig',
     dirty: false,
     solvable: false,
@@ -871,6 +1011,7 @@ function newBuild(cols, rows) {
   updateSolvable();
   updateUndoBtn();
   syncSizeChips();
+  syncShapeChips();
 }
 
 function snapshot() {
@@ -925,7 +1066,7 @@ function buildSample(cell, isDown) {
   }
 
   if (build.tool === 'capy') {
-    if (!same(cell, m.start) && !same(cell, m.goal)) {
+    if (m.active(cell.x, cell.y) && !same(cell, m.start) && !same(cell, m.goal)) {
       m.start = { ...cell };
       build.dirty = true;
       placedThisStroke = true;
@@ -934,7 +1075,7 @@ function buildSample(cell, isDown) {
     return;
   }
   if (build.tool === 'spring') {
-    if (!same(cell, m.goal) && !same(cell, m.start)) {
+    if (m.active(cell.x, cell.y) && !same(cell, m.goal) && !same(cell, m.start)) {
       m.goal = { ...cell };
       build.dirty = true;
       placedThisStroke = true;
@@ -1047,11 +1188,12 @@ function renderGallery() {
     });
     mk('✏️ Edit', '', () => {
       hideOverlay('galleryOverlay');
-      build = { maze: maze.clone(), tool: 'dig', dirty: false, solvable: false, undo: [] };
+      build = { maze: maze.clone(), shape: 'custom', tool: 'dig', dirty: false, solvable: false, undo: [] };
       setTool('dig');
       updateSolvable();
       updateUndoBtn();
       syncSizeChips();
+      syncShapeChips();
       setMode('build');
       toast(`Editing “${item.name}” ✏️`);
     });
@@ -1072,20 +1214,33 @@ function drawThumb(cv, m) {
   const cs = Math.min((cv.width - pad * 2) / m.cols, (cv.height - pad * 2) / m.rows);
   const ox = (cv.width - cs * m.cols) / 2;
   const oy = (cv.height - cs * m.rows) / 2;
-  c.fillStyle = C.ground;
-  c.fillRect(0, 0, cv.width, cv.height);
+  const shaped = m.mask.includes(0);
+  if (shaped) {
+    c.fillStyle = '#FFF8EA';
+    c.fillRect(0, 0, cv.width, cv.height);
+    c.fillStyle = C.ground;
+    c.beginPath();
+    for (let y = 0; y < m.rows; y++)
+      for (let x = 0; x < m.cols; x++)
+        if (m.mask[m.i(x, y)]) c.rect(ox + x * cs - 0.5, oy + y * cs - 0.5, cs + 1, cs + 1);
+    c.fill();
+  } else {
+    c.fillStyle = C.ground;
+    c.fillRect(0, 0, cv.width, cv.height);
+  }
   c.strokeStyle = C.wall;
   c.lineWidth = Math.max(1.5, cs * 0.18);
   c.lineCap = 'round';
   c.beginPath();
   for (let y = 0; y < m.rows; y++) {
     for (let x = 0; x < m.cols; x++) {
+      if (!m.mask[m.i(x, y)]) continue;
       const b = m.walls[m.i(x, y)];
       const px = ox + x * cs, py = oy + y * cs;
       if (b & 1) { c.moveTo(px, py); c.lineTo(px + cs, py); }
       if (b & 8) { c.moveTo(px, py); c.lineTo(px, py + cs); }
-      if (x === m.cols - 1 && (b & 2)) { c.moveTo(px + cs, py); c.lineTo(px + cs, py + cs); }
-      if (y === m.rows - 1 && (b & 4)) { c.moveTo(px, py + cs); c.lineTo(px + cs, py + cs); }
+      if ((x === m.cols - 1 || !m.mask[m.i(x + 1, y)]) && (b & 2)) { c.moveTo(px + cs, py); c.lineTo(px + cs, py + cs); }
+      if ((y === m.rows - 1 || !m.mask[m.i(x, y + 1)]) && (b & 4)) { c.moveTo(px, py + cs); c.lineTo(px + cs, py + cs); }
     }
   }
   c.stroke();
@@ -1265,6 +1420,12 @@ function syncSizeChips() {
   });
 }
 
+function syncShapeChips() {
+  document.querySelectorAll('.shape').forEach(b => {
+    b.classList.toggle('active', !!build && b.dataset.shape === build.shape);
+  });
+}
+
 /* ---------------- wire up UI ---------------- */
 
 $('modePlay').addEventListener('click', () => {
@@ -1329,6 +1490,17 @@ document.querySelectorAll('.tool').forEach(btn => {
       spring: 'Tap where the hot spring should go ♨️',
     };
     toast(tips[btn.dataset.tool], 2000);
+  });
+});
+
+document.querySelectorAll('.shape').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const shape = btn.dataset.shape;
+    if (build && build.shape === shape) return;
+    if (build && build.dirty && !confirm('Start a fresh maze? Your current digging will be lost.')) return;
+    newBuild(build ? build.maze.cols : 10, build ? build.maze.rows : 10, shape);
+    const names = { square: 'Square', heart: 'Heart', ring: 'Donut', diamond: 'Diamond', capy: 'Capybara' };
+    toast(`${names[shape] || 'New'} maze! ${btn.textContent}`, 1600);
   });
 });
 
@@ -1459,7 +1631,9 @@ requestAnimationFrame(frame);
 
 window.__capyTest = {
   Maze,
+  SHAPES,
   get state() { return { mode, play, build, view }; },
   cellCenter,
   canvas,
+  renderNow: () => render(performance.now()),
 };

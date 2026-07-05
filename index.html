@@ -16,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
 <!-- bump ?v= together whenever styles.css or app.js change, so GitHub Pages'
      10-minute cache can never pair a fresh index.html with a stale script -->
-<link rel="stylesheet" href="styles.css?v=2">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 
@@ -65,6 +65,13 @@
     <button class="chip tool" data-tool="wall">🧱 Fill</button>
     <button class="chip tool" data-tool="capy">🐾 Capy</button>
     <button class="chip tool" data-tool="spring">♨️ Spring</button>
+  </div>
+  <div class="group" id="shapeGroup" role="group" aria-label="Maze shape">
+    <button class="chip shape active" data-shape="square" aria-label="Square maze">⬛</button>
+    <button class="chip shape" data-shape="heart" aria-label="Heart maze">🧡</button>
+    <button class="chip shape" data-shape="ring" aria-label="Donut maze">🍩</button>
+    <button class="chip shape" data-shape="diamond" aria-label="Diamond maze">🔷</button>
+    <button class="chip shape" data-shape="capy" aria-label="Capybara maze">🦫</button>
   </div>
   <div class="group" id="sizeGroup" role="group" aria-label="Size">
     <button class="chip bsize active" data-cols="6" data-rows="6">🐣 Small</button>
@@ -132,6 +139,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

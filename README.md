@@ -10,10 +10,12 @@ them.
   your finger (or use arrow keys). Drag back along your trail to backtrack.
   💡 Hint flashes the next few steps of the shortest path.
 - **🛠️ Build** — start from solid ground and **⛏️ Dig** tunnels by dragging.
-  **🧱 Wall** fills passages back in, **🐾 Capy** and **♨️ Spring** move the
-  start and goal. A live badge shows whether the maze is solvable. **▶️ Test**
-  playtests it, **💾 Save** stores it in My Mazes (localStorage), **📤 Share**
-  encodes the whole maze into a link you can send.
+  **🧱 Fill** fills passages back in, **🐾 Capy** and **♨️ Spring** move the
+  start and goal. Pick a canvas shape — square, heart 🧡, donut 🍩, diamond 🔷,
+  or capybara head 🦫 — at any size. A live badge shows whether the maze is
+  solvable. **▶️ Test** playtests it, **💾 Save** stores it in My Mazes
+  (localStorage), **📤 Share** encodes the whole maze (including its shape)
+  into a link you can send.
 
 ## Running it
 
