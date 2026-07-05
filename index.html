@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Capy Maze">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#FBF3E4">
+<meta name="description" content="Capy Maze — help a capybara find the hot spring! Generate mazes, solve them with your finger, or build your own. Made for iPad.">
+<title>Capy Maze 🍊 — a capybara maze game</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="capylogo" viewBox="0 0 120 120" width="42" height="42" aria-hidden="true">
+      <circle cx="60" cy="30" r="12" fill="#F59E2D"/>
+      <circle cx="60" cy="30" r="12" fill="none" stroke="#E5822B" stroke-width="2"/>
+      <ellipse cx="71" cy="20" rx="7" ry="3.6" fill="#7CB05B" transform="rotate(-32 71 20)"/>
+      <circle cx="28" cy="42" r="10" fill="#7A4E2A"/><circle cx="92" cy="42" r="10" fill="#7A4E2A"/>
+      <circle cx="28" cy="42" r="4.6" fill="#B98A5A"/><circle cx="92" cy="42" r="4.6" fill="#B98A5A"/>
+      <ellipse cx="60" cy="72" rx="42" ry="36" fill="#96683C"/>
+      <ellipse cx="60" cy="89" rx="22" ry="14" fill="#C49A6C"/>
+      <ellipse cx="53" cy="85" rx="2.6" ry="3.6" fill="#2E2013"/><ellipse cx="67" cy="85" rx="2.6" ry="3.6" fill="#2E2013"/>
+      <circle cx="43" cy="62" r="4.6" fill="#2E2013"/><circle cx="77" cy="62" r="4.6" fill="#2E2013"/>
+      <circle cx="34" cy="74" r="6" fill="#F0937A" opacity=".45"/><circle cx="86" cy="74" r="6" fill="#F0937A" opacity=".45"/>
+    </svg>
+    <h1>Capy Maze</h1>
+  </div>
+  <div class="modeSwitch" role="tablist" aria-label="Mode">
+    <button id="modePlay" class="modeBtn active" role="tab" aria-selected="true">🍊 Play</button>
+    <button id="modeBuild" class="modeBtn" role="tab" aria-selected="false">🛠️ Build</button>
+  </div>
+  <button id="soundBtn" class="iconBtn" aria-label="Toggle sound">🔊</button>
+</header>
+
+<div id="playBar" class="toolbar">
+  <div class="group hideWhenTesting" id="diffGroup" role="group" aria-label="Difficulty">
+    <button class="chip diff" data-cols="8" data-rows="8">🌱 Easy</button>
+    <button class="chip diff active" data-cols="12" data-rows="12">🍊 Medium</button>
+    <button class="chip diff" data-cols="16" data-rows="16">🌋 Hard</button>
+    <button class="chip diff" data-cols="22" data-rows="22">👑 Epic</button>
+  </div>
+  <button id="newMazeBtn" class="chip action hideWhenTesting">🔀 New Maze</button>
+  <button id="backToBuildBtn" class="chip warn showWhenTesting">⬅️ Back to Build</button>
+  <button id="hintBtn" class="chip">💡 Hint</button>
+  <button id="shareBtn" class="chip hideWhenTesting">📤 Share</button>
+  <button id="galleryBtnPlay" class="chip hideWhenTesting">📚 My Mazes</button>
+  <div class="stats" aria-label="Progress">⏱ <span id="statTime">0:00</span>&nbsp;·&nbsp;👣 <span id="statSteps">0</span></div>
+</div>
+
+<div id="buildBar" class="toolbar hidden">
+  <div class="group" role="group" aria-label="Tools">
+    <button class="chip tool active" data-tool="dig">⛏️ Dig</button>
+    <button class="chip tool" data-tool="wall">🧱 Fill</button>
+    <button class="chip tool" data-tool="capy">🐾 Capy</button>
+    <button class="chip tool" data-tool="spring">♨️ Spring</button>
+  </div>
+  <div class="group" id="sizeGroup" role="group" aria-label="Size">
+    <button class="chip bsize active" data-cols="6" data-rows="6">🐣 Small</button>
+    <button class="chip bsize" data-cols="10" data-rows="10">🍊 Medium</button>
+    <button class="chip bsize" data-cols="14" data-rows="14">🌳 Big</button>
+  </div>
+  <button id="undoBtn" class="chip">↩️ Undo</button>
+  <button id="clearBtn" class="chip">🧹 Clear</button>
+  <span id="solvableBadge" class="badge no">⛏️ Keep digging to the spring!</span>
+  <button id="testBtn" class="chip action">▶️ Test</button>
+  <button id="saveBtn" class="chip action">💾 Save</button>
+  <button id="shareBtnBuild" class="chip">📤 Share</button>
+  <button id="galleryBtnBuild" class="chip">📚 My Mazes</button>
+</div>
+
+<main id="stage">
+  <canvas id="mazeCanvas" aria-label="Capybara maze — drag the capybara to the hot spring"></canvas>
+</main>
+
+<div id="toast" class="toast" role="status"></div>
+
+<div id="winOverlay" class="overlay hidden">
+  <canvas id="confettiCanvas" aria-hidden="true"></canvas>
+  <div class="card win">
+    <svg class="bigcapy" viewBox="0 0 120 120" width="110" height="110" aria-hidden="true">
+      <circle cx="60" cy="30" r="12" fill="#F59E2D"/>
+      <circle cx="60" cy="30" r="12" fill="none" stroke="#E5822B" stroke-width="2"/>
+      <ellipse cx="71" cy="20" rx="7" ry="3.6" fill="#7CB05B" transform="rotate(-32 71 20)"/>
+      <circle cx="28" cy="42" r="10" fill="#7A4E2A"/><circle cx="92" cy="42" r="10" fill="#7A4E2A"/>
+      <circle cx="28" cy="42" r="4.6" fill="#B98A5A"/><circle cx="92" cy="42" r="4.6" fill="#B98A5A"/>
+      <ellipse cx="60" cy="72" rx="42" ry="36" fill="#96683C"/>
+      <ellipse cx="60" cy="89" rx="22" ry="14" fill="#C49A6C"/>
+      <ellipse cx="53" cy="85" rx="2.6" ry="3.6" fill="#2E2013"/><ellipse cx="67" cy="85" rx="2.6" ry="3.6" fill="#2E2013"/>
+      <path d="M37 60 q6 7 12 0" stroke="#2E2013" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <path d="M71 60 q6 7 12 0" stroke="#2E2013" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <circle cx="34" cy="74" r="6" fill="#F0937A" opacity=".55"/><circle cx="86" cy="74" r="6" fill="#F0937A" opacity=".55"/>
+    </svg>
+    <h2 id="winTitle">Capy-tastic!</h2>
+    <p id="winStats"></p>
+    <div class="row">
+      <button id="winAgainBtn" class="btn secondary">🔁 Replay</button>
+      <button id="winNextBtn" class="btn primary">🔀 New Maze</button>
+    </div>
+  </div>
+</div>
+
+<div id="galleryOverlay" class="overlay hidden">
+  <div class="card wide">
+    <div class="cardHead">
+      <h2>📚 My Mazes</h2>
+      <button class="iconBtn closeBtn" data-close="galleryOverlay" aria-label="Close">✕</button>
+    </div>
+    <div id="galleryList" class="galleryList"></div>
+  </div>
+</div>
+
+<div id="saveOverlay" class="overlay hidden">
+  <div class="card">
+    <h2>Name your maze</h2>
+    <input id="saveName" maxlength="40" autocomplete="off" placeholder="Capy's Great Adventure">
+    <div class="row">
+      <button id="saveCancelBtn" class="btn secondary">Cancel</button>
+      <button id="saveConfirmBtn" class="btn primary">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
