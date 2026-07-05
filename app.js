@@ -40,6 +40,10 @@ function b64urlDecode(str) {
   return atob(str);
 }
 
+// localStorage access throws under iOS "Block All Cookies" and some WebViews
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } }
+
 /* ---------------- maze model ---------------- */
 // Wall bits per cell: 1=top, 2=right, 4=bottom, 8=left.
 
@@ -188,6 +192,7 @@ class Maze {
     for (let i = 0; i < raw.length; i++) m.walls[i] = raw.charCodeAt(i) & 15;
     m.start = { x: clamp(o.s[0] | 0, 0, c - 1), y: clamp(o.s[1] | 0, 0, r - 1) };
     m.goal = { x: clamp(o.g[0] | 0, 0, c - 1), y: clamp(o.g[1] | 0, 0, r - 1) };
+    if (same(m.start, m.goal)) throw new Error('bad endpoints');
     m.sanitize();
     return m;
   }
@@ -221,7 +226,7 @@ class Maze {
 /* ---------------- sound ---------------- */
 
 let audioCtx = null;
-let muted = localStorage.getItem('capymaze.muted') === '1';
+let muted = lsGet('capymaze.muted') === '1';
 
 function ac() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -623,8 +628,11 @@ function updateHud() {
 }
 
 function frame(t) {
-  render(t);
-  updateHud();
+  // no point repainting the maze underneath a modal overlay
+  if (!document.querySelector('.overlay:not(.hidden)')) {
+    render(t);
+    updateHud();
+  }
   requestAnimationFrame(frame);
 }
 
@@ -633,10 +641,11 @@ function frame(t) {
 let activePointer = null;
 let lastPointPx = null;
 let dragLastCell = null;   // build-mode drag anchor
-let canvasRect = null;
 
 function pointFromEvent(e) {
-  return { x: e.clientX - canvasRect.left, y: e.clientY - canvasRect.top };
+  // recompute each event: the canvas can move mid-drag (toolbar rewrap, Split View resize)
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
 
 canvas.addEventListener('pointerdown', e => {
@@ -644,7 +653,6 @@ canvas.addEventListener('pointerdown', e => {
   if (activePointer !== null) return;
   if (!muted) { try { ac(); } catch (err) { /* iOS unlocks audio on this gesture */ } }
   activePointer = e.pointerId;
-  canvasRect = canvas.getBoundingClientRect();
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
   const p = pointFromEvent(e);
   lastPointPx = p;
@@ -672,9 +680,30 @@ canvas.addEventListener('pointermove', e => {
 
 function endPointer(e) {
   if (e.pointerId !== activePointer) return;
+  finishBuildStroke();
   activePointer = null;
   lastPointPx = null;
   dragLastCell = null;
+}
+
+// Runs only for the stroke-owning pointer (endPointer guards the id), on both
+// pointerup and pointercancel.
+function finishBuildStroke() {
+  if (mode !== 'build' || !build) return;
+  // drop no-op snapshots so Undo always does something visible
+  if (build.undo.length > 0 && !strokeChanged) {
+    const s = build.undo[build.undo.length - 1];
+    const sameWalls = build.maze.walls.every((v, i) => v === s.walls[i]);
+    if (sameWalls && same(s.start, build.maze.start) && same(s.goal, build.maze.goal)) {
+      build.undo.pop();
+      updateUndoBtn();
+    }
+  }
+  // after placing Capy or the spring, hop back to digging so kids don't get stuck in a tool
+  if (placedThisStroke) {
+    placedThisStroke = false;
+    setTool('dig');
+  }
 }
 
 canvas.addEventListener('pointerup', endPointer);
@@ -699,7 +728,12 @@ function playSample(cell) {
   const k = key(cell);
   const existing = play.idx.get(k);
   if (existing !== undefined) {
-    // dragged back onto an earlier part of the trail: truncate to there
+    // dragged back onto an earlier part of the trail: truncate to there —
+    // but only via a legal step, never by teleporting through a wall
+    const prev = play.path.length > 1 ? play.path[play.path.length - 2] : null;
+    const legalBack = (prev && same(cell, prev)) ||
+      (manhattan(head, cell) === 1 && play.maze.canPass(head, cell));
+    if (!legalBack) return;
     while (play.path.length - 1 > existing) {
       const removed = play.path.pop();
       play.idx.delete(key(removed));
@@ -731,6 +765,7 @@ function playSample(cell) {
 }
 
 function extendTo(cell, from) {
+  if (play.done) return;
   play.path.push(cell);
   play.idx.set(key(cell), play.path.length - 1);
   play.moves++;
@@ -785,10 +820,12 @@ function onWin() {
   $('winTitle').textContent = title;
   $('winStats').textContent = stats;
   $('winNextBtn').textContent = play.kind === 'test' ? '🛠️ Back to Build' : '🔀 New Maze';
+  const session = play;
   setTimeout(() => {
-    if (play && play.done) {
+    if (play === session && play.done && mode === 'play') {
       showOverlay('winOverlay');
       startConfetti();
+      $('winNextBtn').focus();
     }
   }, 550);
 }
@@ -852,6 +889,7 @@ function undo() {
   build.maze.walls.set(s.walls);
   build.maze.start = s.start;
   build.maze.goal = s.goal;
+  build.dirty = true;  // restored work is still work worth confirming before it's lost
   updateSolvable();
   updateUndoBtn();
 }
@@ -936,22 +974,6 @@ function buildSample(cell, isDown) {
   updateSolvable(true);
 }
 
-canvas.addEventListener('pointerup', () => {
-  // drop no-op snapshots so Undo always does something visible
-  if (mode === 'build' && build && build.undo.length > 0 && !strokeChanged) {
-    const s = build.undo[build.undo.length - 1];
-    const sameWalls = build.maze.walls.every((v, i) => v === s.walls[i]);
-    if (sameWalls && same(s.start, build.maze.start) && same(s.goal, build.maze.goal)) {
-      build.undo.pop();
-      updateUndoBtn();
-    }
-  }
-  // after placing Capy or the spring, hop back to digging so kids don't get stuck in a tool
-  if (mode === 'build' && placedThisStroke) {
-    placedThisStroke = false;
-    setTool('dig');
-  }
-});
 
 /* ---------------- storage & gallery ---------------- */
 
@@ -1010,10 +1032,11 @@ function renderGallery() {
 
     const btns = document.createElement('div');
     btns.className = 'galleryBtns';
-    const mk = (label, cls, fn) => {
+    const mk = (label, cls, fn, aria) => {
       const b = document.createElement('button');
       b.className = 'chip ' + cls;
       b.textContent = label;
+      if (aria) b.setAttribute('aria-label', aria);
       b.addEventListener('click', fn);
       btns.appendChild(b);
     };
@@ -1025,18 +1048,19 @@ function renderGallery() {
     mk('✏️ Edit', '', () => {
       hideOverlay('galleryOverlay');
       build = { maze: maze.clone(), tool: 'dig', dirty: false, solvable: false, undo: [] };
+      setTool('dig');
       updateSolvable();
       updateUndoBtn();
       syncSizeChips();
       setMode('build');
       toast(`Editing “${item.name}” ✏️`);
     });
-    mk('📤', '', () => shareMaze(maze, `“${item.name}”`));
+    mk('📤', '', () => shareMaze(maze, `“${item.name}”`), 'Share maze');
     mk('🗑️', '', () => {
       if (!confirm(`Delete “${item.name}”?`)) return;
       persistSaved(loadSaved().filter(x => x.id !== item.id));
       renderGallery();
-    });
+    }, 'Delete maze');
     row.appendChild(btns);
     container.appendChild(row);
   }
@@ -1116,8 +1140,14 @@ async function shareMaze(maze, label) {
 
 function parseHashMaze() {
   const match = location.hash.match(/#m=([A-Za-z0-9_-]+)/);
-  if (!match) return null;
-  try { return Maze.decode(match[1]); } catch (e) { return null; }
+  if (!match) return { present: false, maze: null };
+  try {
+    const m = Maze.decode(match[1]);
+    if (!m.isSolvable()) throw new Error('unsolvable');
+    return { present: true, maze: m };
+  } catch (e) {
+    return { present: true, maze: null };
+  }
 }
 
 /* ---------------- overlays & toast ---------------- */
@@ -1311,10 +1341,11 @@ $('undoBtn').addEventListener('click', undo);
 
 $('clearBtn').addEventListener('click', () => {
   if (!build) return;
+  if (build.maze.walls.every(v => v === 15)) return;  // already blank
   if (build.dirty && !confirm('Clear the whole maze?')) return;
   snapshot();
   build.maze.walls.fill(15);
-  build.dirty = false;
+  build.dirty = true;
   updateSolvable();
 });
 
@@ -1337,7 +1368,8 @@ $('saveBtn').addEventListener('click', () => {
   $('saveName').value = '';
   $('saveName').placeholder = `Capy Maze #${loadSaved().length + 1}`;
   showOverlay('saveOverlay');
-  setTimeout(() => $('saveName').focus(), 50);
+  // synchronous focus keeps the user-gesture chain so iPad raises the keyboard
+  $('saveName').focus();
 });
 
 $('saveConfirmBtn').addEventListener('click', () => {
@@ -1377,35 +1409,45 @@ $('winNextBtn').addEventListener('click', () => {
 });
 
 const soundBtn = $('soundBtn');
-function syncSoundBtn() { soundBtn.textContent = muted ? '🔇' : '🔊'; }
+function syncSoundBtn() {
+  soundBtn.textContent = muted ? '🔇' : '🔊';
+  soundBtn.setAttribute('aria-pressed', String(!muted));
+}
 soundBtn.addEventListener('click', () => {
   muted = !muted;
-  localStorage.setItem('capymaze.muted', muted ? '1' : '0');
+  lsSet('capymaze.muted', muted ? '1' : '0');
   syncSoundBtn();
   if (!muted) squeak();
 });
 syncSoundBtn();
 
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const open = document.querySelector('.overlay:not(.hidden)');
+  if (open) hideOverlay(open.id);
+});
+
 window.addEventListener('hashchange', () => {
-  const m = parseHashMaze();
-  if (m) {
-    enterPlay(m, { kind: 'shared' });
-    setMode('play');
-    toast('Someone sent you a maze! 💌');
-  }
+  const shared = parseHashMaze();
+  if (!shared.present) return;
+  if (!shared.maze) { toast('That maze link looks broken 😢'); return; }
+  enterPlay(shared.maze, { kind: 'shared' });
+  setMode('play');
+  toast('Someone sent you a maze! 💌');
 });
 
 /* ---------------- init ---------------- */
 
 resizeCanvas();
-const sharedMaze = parseHashMaze();
-if (sharedMaze) {
-  enterPlay(sharedMaze, { kind: 'shared' });
-  toast('Someone sent you a maze! 💌');
+const sharedAtLoad = parseHashMaze();
+if (sharedAtLoad.maze) {
+  enterPlay(sharedAtLoad.maze, { kind: 'shared' });
 } else {
   newRandomMaze(12, 12);
 }
 setMode('play');
+if (sharedAtLoad.maze) toast('Someone sent you a maze! 💌');
+else if (sharedAtLoad.present) toast('That maze link looks broken 😢 Here’s a fresh one!');
 requestAnimationFrame(frame);
 
 /* ---------------- test hooks (harmless in production) ---------------- */
