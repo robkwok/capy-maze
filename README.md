@@ -8,7 +8,8 @@ them.
 
 - **🍊 Play** — generates a fresh maze (Easy 8×8 → Epic 22×22) in any shape:
   square, heart 🧡, donut 🍩, diamond 🔷, or capybara head 🦫. Drag Capy with
-  your finger (or use arrow keys). Drag back along your trail to backtrack.
+  your finger (or use arrow keys). Drag back along your trail to backtrack,
+  or tap anywhere on the trail and Capy runs back to that spot.
   💡 Hint flashes the next few steps of the shortest path, 🔁 Restart replays
   the same maze.
 - **🍊 Yuzu Ten** (toggle in the Play bar) — first-grade math mode: yuzus

@@ -944,6 +944,7 @@ function updateHud() {
 function frame(t) {
   // no point repainting the maze underneath a modal overlay
   if (!document.querySelector('.overlay:not(.hidden)')) {
+    rewindTick();
     yuzuFriendTick(t);
     render(t);
     updateHud();
@@ -956,6 +957,7 @@ function frame(t) {
 let activePointer = null;
 let lastPointPx = null;
 let dragLastCell = null;   // build-mode drag anchor
+let downInfo = null;       // pointerdown position/cell, for tap-to-rewind detection
 
 function pointFromEvent(e) {
   // recompute each event: the canvas can move mid-drag (toolbar rewrap, Split View resize)
@@ -972,6 +974,8 @@ canvas.addEventListener('pointerdown', e => {
   const p = pointFromEvent(e);
   lastPointPx = p;
   dragLastCell = null;
+  downInfo = { x: p.x, y: p.y, cell: cellFromPoint(p.x, p.y) };
+  if (mode === 'play' && play) play.rewind = null;  // grabbing cancels an in-flight rewind
   handleSample(p, true);
   e.preventDefault();
 });
@@ -995,10 +999,43 @@ canvas.addEventListener('pointermove', e => {
 
 function endPointer(e) {
   if (e.pointerId !== activePointer) return;
+  if (e.type === 'pointerup') detectTapRewind();
   finishBuildStroke();
   activePointer = null;
   lastPointPx = null;
   dragLastCell = null;
+  downInfo = null;
+}
+
+// A deliberate tap (no drag) on an earlier trail cell sends Capy running
+// back along his own trail to that spot. Drags never trigger this, so a
+// finger drifting across a wall can't yank the trail like it used to.
+function detectTapRewind() {
+  if (mode !== 'play' || !play || play.done || !downInfo || !lastPointPx) return;
+  const moved = Math.hypot(lastPointPx.x - downInfo.x, lastPointPx.y - downInfo.y);
+  if (moved > Math.max(10, view.cs * 0.35)) return;
+  const cell = cellFromPoint(lastPointPx.x, lastPointPx.y);
+  if (!cell || !downInfo.cell || !same(cell, downInfo.cell)) return;
+  const idx = play.idx.get(key(cell));
+  if (idx === undefined || idx >= play.path.length - 1) return;
+  play.rewind = idx;
+  hideQuiz();
+  tone(900, 400, 0.16, 0, 'sine', 0.06);
+}
+
+// Animate the rewind a few cells per frame so Capy visibly runs back.
+function rewindTick() {
+  if (mode !== 'play' || !play || play.rewind === null || play.rewind === undefined) return;
+  if (play.done) { play.rewind = null; return; }
+  let steps = 3;
+  while (steps-- > 0 && play.path.length - 1 > play.rewind) {
+    const oldHead = play.path[play.path.length - 1];
+    const removed = play.path.pop();
+    play.idx.delete(key(removed));
+    const newHead = play.path[play.path.length - 1];
+    if (newHead.x !== oldHead.x) play.fx = newHead.x > oldHead.x ? 1 : -1;
+  }
+  if (play.path.length - 1 <= play.rewind) play.rewind = null;
 }
 
 // Runs only for the stroke-owning pointer (endPointer guards the id), on both
@@ -1290,6 +1327,7 @@ function enterPlay(maze, opts) {
     done: false,
     fx: 1,
     hint: null,
+    rewind: null,   // trail index Capy is animating back to (tap-to-rewind)
   };
   play.yuzu = (yuzuMode && (opts.kind === 'random' || opts.kind === 'shared'))
     ? setupYuzu(maze)
@@ -2053,4 +2091,5 @@ window.__capyTest = {
   canvas,
   renderNow: () => render(performance.now()),
   yuzuFriendTick,
+  rewindTick,
 };
