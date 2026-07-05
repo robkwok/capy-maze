@@ -123,16 +123,28 @@ class Maze {
     return true;
   }
 
-  // Iterative recursive-backtracker: produces a perfect maze (unique solution).
+  // Iterative recursive-backtracker over the active mask: a perfect maze
+  // (unique solution) covering every active cell of the shape.
   // Deterministic for a given seed — seed share links depend on this exact
   // algorithm, so changes here break previously shared #r= links.
-  static generate(cols, rows, seed) {
+  static generate(cols, rows, seed, shapeKey) {
     const s = seed === undefined ? (Math.random() * 0xFFFFFFFF) >>> 0 : seed >>> 0;
     const rng = mulberry32(s);
-    const m = new Maze(cols, rows);
+    const shape = SHAPES[shapeKey] ? shapeKey : 'square';
+    const m = Maze.shaped(cols, rows, SHAPES[shape]);  // mask + farthest-apart start/goal
     const seen = new Uint8Array(cols * rows);
-    const sx = Math.floor(rng() * cols);
-    const sy = Math.floor(rng() * rows);
+    // rejection-sample the carve origin: for squares this is the same two rng
+    // calls as the original generator, so pre-shape seed links still reproduce
+    let sx, sy, guard = 0;
+    do {
+      sx = Math.floor(rng() * cols);
+      sy = Math.floor(rng() * rows);
+    } while (!m.active(sx, sy) && ++guard < 1000);
+    if (!m.active(sx, sy)) {
+      const fi = m.mask.indexOf(1);
+      sx = fi % cols;
+      sy = (fi / cols) | 0;
+    }
     const stack = [{ x: sx, y: sy }];
     seen[m.i(sx, sy)] = 1;
     while (stack.length) {
@@ -140,7 +152,7 @@ class Maze {
       const options = [];
       for (const D of Maze.DIRS) {
         const nx = cur.x + D.dx, ny = cur.y + D.dy;
-        if (m.inb(nx, ny) && !seen[m.i(nx, ny)]) options.push({ x: nx, y: ny });
+        if (m.active(nx, ny) && !seen[m.i(nx, ny)]) options.push({ x: nx, y: ny });
       }
       if (!options.length) { stack.pop(); continue; }
       const next = options[Math.floor(rng() * options.length)];
@@ -148,9 +160,7 @@ class Maze {
       seen[m.i(next.x, next.y)] = 1;
       stack.push(next);
     }
-    m.start = { x: 0, y: 0 };
-    m.goal = { x: cols - 1, y: rows - 1 };
-    m.gen = { seed: s, cols, rows };  // stamped last: carving above cleared it
+    m.gen = { seed: s, cols, rows, shape };  // stamped last: carving above cleared it
     return m;
   }
 
@@ -989,8 +999,13 @@ function extendTo(cell, from) {
   if (same(cell, play.maze.goal)) onWin();
 }
 
+function currentShape() {
+  const active = document.querySelector('#playBar .shape.active');
+  return active && SHAPES[active.dataset.shape] ? active.dataset.shape : 'square';
+}
+
 function newRandomMaze(cols, rows) {
-  enterPlay(Maze.generate(cols, rows), { kind: 'random' });
+  enterPlay(Maze.generate(cols, rows, undefined, currentShape()), { kind: 'random' });
 }
 
 function currentDiff() {
@@ -1350,9 +1365,13 @@ function saveCurrentBuild(name) {
 
 function mazeShareUrl(maze) {
   // untouched generated mazes travel as just their seed — a ~45-char link
-  const tag = maze.gen
-    ? 'r=' + maze.gen.seed.toString(36) + '-' + maze.gen.cols + '-' + maze.gen.rows
-    : 'm=' + maze.encode();
+  let tag;
+  if (maze.gen) {
+    tag = 'r=' + maze.gen.seed.toString(36) + '-' + maze.gen.cols + '-' + maze.gen.rows;
+    if (maze.gen.shape && maze.gen.shape !== 'square') tag += '-' + maze.gen.shape;
+  } else {
+    tag = 'm=' + maze.encode();
+  }
   return location.origin + location.pathname + '#' + tag;
 }
 
@@ -1380,12 +1399,13 @@ async function shareMaze(maze, label) {
 }
 
 function parseHashMaze() {
-  const rm = location.hash.match(/#r=([0-9a-z]+)-(\d+)-(\d+)/);
+  const rm = location.hash.match(/#r=([0-9a-z]+)-(\d+)-(\d+)(?:-([a-z]+))?/);
   if (rm) {
     const c = +rm[2], r = +rm[3];
-    if (c >= 2 && c <= 40 && r >= 2 && r <= 40) {
+    const shapeKey = rm[4];
+    if (c >= 2 && c <= 40 && r >= 2 && r <= 40 && (!shapeKey || SHAPES[shapeKey])) {
       try {
-        const m = Maze.generate(c, r, parseInt(rm[1], 36) >>> 0);
+        const m = Maze.generate(c, r, parseInt(rm[1], 36) >>> 0, shapeKey);
         if (m.isSolvable()) return { present: true, maze: m };
       } catch (e) { /* fall through to broken-link handling */ }
     }
@@ -1518,7 +1538,7 @@ function syncSizeChips() {
 }
 
 function syncShapeChips() {
-  document.querySelectorAll('.shape').forEach(b => {
+  document.querySelectorAll('#buildBar .shape').forEach(b => {
     b.classList.toggle('active', !!build && b.dataset.shape === build.shape);
   });
 }
@@ -1590,7 +1610,16 @@ document.querySelectorAll('.tool').forEach(btn => {
   });
 });
 
-document.querySelectorAll('.shape').forEach(btn => {
+document.querySelectorAll('#playBar .shape').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#playBar .shape').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const d = currentDiff();
+    newRandomMaze(d.cols, d.rows);
+  });
+});
+
+document.querySelectorAll('#buildBar .shape').forEach(btn => {
   btn.addEventListener('click', () => {
     const shape = btn.dataset.shape;
     if (build && build.shape === shape) return;

@@ -6,9 +6,11 @@ them.
 
 ## Modes
 
-- **🍊 Play** — generates a fresh maze (Easy 8×8 → Epic 22×22). Drag Capy with
+- **🍊 Play** — generates a fresh maze (Easy 8×8 → Epic 22×22) in any shape:
+  square, heart 🧡, donut 🍩, diamond 🔷, or capybara head 🦫. Drag Capy with
   your finger (or use arrow keys). Drag back along your trail to backtrack.
-  💡 Hint flashes the next few steps of the shortest path.
+  💡 Hint flashes the next few steps of the shortest path, 🔁 Restart replays
+  the same maze.
 - **🛠️ Build** — start from solid ground and **⛏️ Dig** tunnels by dragging.
   **🧱 Fill** fills passages back in, **🐾 Capy** and **♨️ Spring** move the
   start and goal. Pick a canvas shape — square, heart 🧡, donut 🍩, diamond 🔷,

@@ -195,7 +195,7 @@ button {
 /* Build mode is for small hands: bigger targets */
 #buildBar .chip { font-size: 17px; padding: 10px 17px; min-height: 50px; }
 #buildBar .badge { font-size: 16px; }
-#buildBar .chip.shape { font-size: 21px; padding: 8px 13px; line-height: 1; }
+.chip.shape { font-size: 21px; padding: 8px 13px; line-height: 1; }
 
 .stats {
   margin-left: auto;
